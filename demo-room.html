@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <title>demo</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+        <style>
+            body {
+                font-family: Monospace;
+                background-color: #fff;
+                color: #fff;
+                margin: 0px;
+                overflow: hidden;
+            }
+
+            #container {
+                width: 950px;
+                height: 633px;
+                border: 2px solid red;
+                position: relative;
+                top:50px;
+                left:100px;
+            }
+        </style>
+    </head>
+
+    <body>
+        <div id='container'></div>
+
+        <script src="three.js"></script>
+        <script src="OBJLoader.js"></script>
+        <script src="Octree.js"></script>
+        <script src="jquery-1.10.1.js"></script>
+
+<script>
+var DEBUG = true;
+
+var container, stats;
+
+var camera, scene, renderer;
+
+var composer, edgeEffect, edgeEffect2, effectFXAA;
+
+var mouse = new THREE.Vector2(), INTERSECTED;
+
+// var CONTAINER_WIDTH = 700, CONTAINER_HEIGHT = 700;
+var CONTAINER_WIDTH = 950, CONTAINER_HEIGHT = 633;
+
+var windowHalfX = window.innerWidth / 2;
+var windowHalfY = window.innerHeight / 2;
+
+
+
+var camera_direction = new THREE.Vector3(0, 0, 0);
+var current_camera_position_index = 0;
+
+var octree;
+
+var objects = [];
+var objectsSearch = [];
+
+init();
+animate();
+
+
+function init() {
+    // raycasting
+
+    octree = new THREE.Octree( {
+        undeferred: false,
+        depthMax: Infinity,
+        objectsThreshold: 8,
+        overlapPct: 0.15
+    } );
+
+    container = document.getElementById('container')
+
+    renderer = new THREE.WebGLRenderer({antialias: true});
+    renderer.sortObjects = true;
+
+    camera = new THREE.PerspectiveCamera( 45, CONTAINER_WIDTH / 
+        CONTAINER_HEIGHT, 0.000001, 2000 );
+    camera.position = new THREE.Vector3(0, 0, 0);
+
+    // scene
+    scene = new THREE.Scene();
+
+
+    var directionalLight = new THREE.DirectionalLight( 0xffffff );
+    directionalLight.position.set( 5, 5, 5 );
+    directionalLight.intensity = 0.9;
+    scene.add( directionalLight );
+
+    // model
+
+    var manager = new THREE.LoadingManager();
+    manager.onProgress = function ( item, loaded, total ) {
+
+        console.log( item, loaded, total );
+
+    };
+
+    // containers
+
+    var loader = new THREE.OBJLoader( manager );
+
+    // room
+
+
+    loader.load( 'room-walls-6.obj', function ( object ) {
+        var wall_re = /(\w+)\.\w+/;
+
+        object.traverse(function(child){
+            if (child instanceof THREE.Mesh) {
+                console.log(child.parent.name);
+                var wall_match = child.parent.name.match(wall_re);
+                // console.log(wall_key);
+                if (wall_match) {
+                    var wall_key = wall_match[1].toLowerCase();
+                } else {
+                    var wall_key = 'empty'
+                }
+
+                child.material = new THREE.MeshBasicMaterial({
+                    color: 0xff0000,
+                    depthTest: true,
+                    transparent: true,
+                    side: THREE.DoubleSide,        
+                    wireframe: true
+                });
+
+                octree.add( child, { useFaces: true } );
+                objects.push( child );
+            }
+        });
+        scene.add(object)
+    });
+
+
+    projector = new THREE.Projector();
+    raycaster = new THREE.Raycaster();
+
+    renderer.setSize(CONTAINER_WIDTH, CONTAINER_HEIGHT);
+    container.appendChild( renderer.domElement );
+
+    $(window).keydown(function(event){
+        kc = event.keyCode;
+        if (kc == 87) {
+            //forward - w
+            camera.position.setX(camera.position.x + 0.01);
+        } else if (kc == 83) {
+            // back - s
+            camera.position.setX(camera.position.x - 0.01);
+        } else if (kc == 65) {
+            // left - a
+            camera.position.setZ(camera.position.z + 0.01);
+        } else if (kc == 68) {
+            // right - d
+            camera.position.setZ(camera.position.z - 0.01);
+        } else if (kc == 39) {
+            // turn right
+            camera.rotateOnAxis(new THREE.Vector3(0, 1, 0), -0.1);
+        } else if (kc == 37) {
+            // turn left
+            camera.rotateOnAxis(new THREE.Vector3(0, 1, 0), 0.1);
+        } else if (kc == 38) {
+            // move uuuuppp
+            camera.position.setY(camera.position.y + 0.01);
+        } else if (kc == 40) {
+            // move down
+            camera.position.setY(camera.position.y - 0.01);
+        } else if (kc == 82) {
+            camera.position = new THREE.Vector3(0, 0, 0);
+        }
+
+        console.log('camera.position x y z', camera.position.x, camera.position.y, camera.position.z);
+        var vector = new THREE.Vector3( 0, 0, -1 );
+        vector.applyQuaternion( camera.quaternion );
+        console.log("direction x y z", vector.x, vector.y, vector.z);
+
+    });
+
+    document.getElementById('container').addEventListener( 'click', onClick, false );
+}
+
+function onClick(event) {
+    mouse.x = ( event.offsetX / CONTAINER_WIDTH ) * 2 - 1;
+    mouse.y = - ( event.offsetY / CONTAINER_HEIGHT ) * 2 + 1;
+
+    var vector = new THREE.Vector3( mouse.x, mouse.y, 0 );
+
+    projector.unprojectVector( vector, camera );
+
+    var raycaster = new THREE.Raycaster( camera.position, vector.sub( camera.position ).normalize() );
+    var octreeObjects;
+    var intersections;
+
+    octreeObjects = octree.search( raycaster.ray.origin, raycaster.ray.far, true, raycaster.ray.direction );
+        
+    intersections = raycaster.intersectOctreeObjects( octreeObjects );
+        
+
+    if ( intersections.length > 0 ) {
+        INTERSECTED = intersections[ 0 ].object;
+        INTERSECTED.material = new THREE.MeshBasicMaterial({color: 0x00ff00, wireframe: true});
+        console.log("INTERSECTED", INTERSECTED.parent.name);
+    }
+}
+
+function animate() {
+
+    requestAnimationFrame( animate );
+    render();
+}
+
+function render() {
+    renderer.render( scene, camera );
+
+    octree.update();
+}
+</script>
+    </body>
+</html>
